@@ -421,6 +421,18 @@ def rfc2822date(dt):
     return formatdate(timeval, usegmt=True)
 
 
+def angle_wrap(s):
+    """Return s surrounded by angle brackets, added only if necessary"""
+    # This is the inverse behavior of email.utils.unquote
+    # (which you might think email.utils.quote would do, but it doesn't)
+    if len(s) > 0:
+        if s[0] != '<':
+            s = '<' + s
+        if s[-1] != '>':
+            s = s + '>'
+    return s
+
+
 def is_lazy(obj):
     """Return True if obj is a Django lazy object."""
     # See django.utils.functional.lazy. (This appears to be preferred
