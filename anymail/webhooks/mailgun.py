@@ -107,21 +107,8 @@ class MailgunTrackingWebhookView(MailgunBaseWebhookView):
                 RejectReason.BOUNCED if 400 <= mta_status < 600
                 else RejectReason.OTHER)
 
-        # Mailgun merges metadata fields with the other event fields.
-        # However, it also includes the original message headers,
-        # which have the metadata separately as X-Mailgun-Variables.
-        try:
-            headers = json.loads(esp_event['message-headers'])
-        except (KeyError, ):
-            metadata = {}
-        else:
-            variables = [value for [field, value] in headers
-                         if field == 'X-Mailgun-Variables']
-            if len(variables) >= 1:
-                # Each X-Mailgun-Variables value is JSON. Parse and merge them all into single dict:
-                metadata = combine(*[json.loads(value) for value in variables])
-            else:
-                metadata = {}
+        # Mailgun metadata is now in a client-info dictionary
+        metadata = esp_event.get('client-info', {})
 
         # tags are sometimes delivered as X-Mailgun-Tag fields, sometimes as tag
         tags = esp_event.getlist('tag', esp_event.getlist('X-Mailgun-Tag', []))
