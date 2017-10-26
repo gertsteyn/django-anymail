@@ -45,6 +45,18 @@ class AnymailInboundEvent(AnymailEvent):
 
     def __init__(self, **kwargs):
         super(AnymailInboundEvent, self).__init__(**kwargs)
+        self.message = kwargs.pop('message', None)  # anymail.inbound.AnymailInboundMessage
+        self.recipient = kwargs.pop('recipient', None)  # str: envelope recipient
+        self.sender = kwargs.pop('sender', None)  # str: envelope sender
+
+        self.stripped_text = kwargs.pop('stripped_text', None)  # cleaned of quotes/signatures (varies by ESP)
+        self.stripped_html = kwargs.pop('stripped_html', None)
+        self.spam_detected = kwargs.pop('spam_detected', None)  # bool
+        self.spam_score = kwargs.pop('spam_score', None)  # float: usually SpamAssassin
+
+        # SPF status?
+        # DKIM status?
+        # DMARC status? (no ESP has documented support yet)
 
 
 class EventType:

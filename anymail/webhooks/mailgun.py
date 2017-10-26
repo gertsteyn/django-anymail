@@ -8,7 +8,8 @@ from django.utils.timezone import utc
 
 from .base import AnymailBaseWebhookView
 from ..exceptions import AnymailWebhookValidationFailure
-from ..signals import tracking, AnymailTrackingEvent, EventType, RejectReason
+from ..inbound import AnymailInboundMessage
+from ..signals import inbound, tracking, AnymailInboundEvent, AnymailTrackingEvent, EventType, RejectReason
 from ..utils import get_anymail_setting, combine
 
 
@@ -38,12 +39,6 @@ class MailgunBaseWebhookView(AnymailBaseWebhookView):
         if not constant_time_compare(signature, expected_signature):
             raise AnymailWebhookValidationFailure("Mailgun webhook called with incorrect signature")
 
-    def parse_events(self, request):
-        return [self.esp_to_anymail_event(request.POST)]
-
-    def esp_to_anymail_event(self, esp_event):
-        raise NotImplementedError()
-
 
 class MailgunTrackingWebhookView(MailgunBaseWebhookView):
     """Handler for Mailgun delivery and engagement tracking webhooks"""
@@ -72,6 +67,9 @@ class MailgunTrackingWebhookView(MailgunBaseWebhookView):
         605: RejectReason.BOUNCED,  # previous bounce
         607: RejectReason.SPAM,  # previous spam complaint
     }
+
+    def parse_events(self, request):
+        return [self.esp_to_anymail_event(request.POST)]
 
     def esp_to_anymail_event(self, esp_event):
         # esp_event is a Django QueryDict (from request.POST),
@@ -140,4 +138,70 @@ class MailgunTrackingWebhookView(MailgunBaseWebhookView):
             click_url=esp_event.get('url', None),
             user_agent=esp_event.get('user-agent', None),
             esp_event=esp_event,
+        )
+
+
+class MailgunInboundWebhookView(MailgunBaseWebhookView):
+    """Handler for Mailgun inbound (route forward-to-url) webhook"""
+
+    signal = inbound
+
+    def parse_events(self, request):
+        return [self.esp_to_anymail_event(request)]
+
+    def esp_to_anymail_event(self, request):
+        # Inbound uses the entire Django request as esp_event, because we need POST and FILES.
+        # Note that request.POST is case-sensitive (unlike email.message.Message headers).
+        esp_event = request
+        if 'body-mime' in request.POST:
+            # Raw-MIME
+            message = AnymailInboundMessage.parse_raw_mime(request.POST['body-mime'])
+        else:
+            # Fully-parsed
+            message = self.message_from_mailgun_parsed(request)
+
+        message.envelope_sender = request.POST.get('sender', None)
+        message.envelope_recipient = request.POST.get('recipient', None)
+        message.stripped_text = request.POST.get('stripped-text', None)
+        message.stripped_html = request.POST.get('stripped-html', None)
+
+        message.spam_detected = message.get('X-Mailgun-Sflag', 'No').lower() == 'yes'
+        try:
+            message.spam_score = float(message['X-Mailgun-Sscore'])
+        except (TypeError, ValueError):
+            pass
+
+        return AnymailInboundEvent(
+            event_type=EventType.INBOUND,
+            timestamp=datetime.fromtimestamp(int(request.POST['timestamp']), tz=utc),
+            event_id=request.POST.get('token', None),
+            esp_event=esp_event,
+            message=message,
+        )
+
+    def message_from_mailgun_parsed(self, request):
+        """Construct a Message from Mailgun's "fully-parsed" fields"""
+        # Mailgun transcodes all fields to UTF-8 for "fully parsed" messages
+        try:
+            attachment_count = int(request.POST['attachment-count'])
+        except (KeyError, TypeError):
+            attachments = None
+        else:
+            # Load attachments from posted files: Mailgun file field names are 1-based
+            att_ids = ['attachment-%d' % i for i in range(1, attachment_count+1)]
+            att_cids = {  # filename: content-id (invert content-id-map)
+                att_id: cid for cid, att_id
+                in json.loads(request.POST.get('content-id-map', '{}')).items()
+            }
+            attachments = [
+                AnymailInboundMessage.construct_attachment_from_uploaded_file(
+                    request.FILES[att_id], content_id=att_cids.get(att_id, None))
+                for att_id in att_ids
+            ]
+
+        return AnymailInboundMessage.construct(
+            headers=json.loads(request.POST['message-headers']),  # includes From, To, Cc, Subject, etc.
+            text=request.POST.get('body-plain', None),
+            html=request.POST.get('body-html', None),
+            attachments=attachments,
         )

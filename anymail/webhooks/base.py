@@ -130,4 +130,4 @@ class AnymailBaseWebhookView(AnymailBasicAuthMixin, View):
 
         (E.g., MailgunTrackingWebhookView will return "Mailgun")
         """
-        return re.sub(r'(Tracking|Inbox)WebhookView$', "", self.__class__.__name__)
+        return re.sub(r'(Tracking|Inbound)WebhookView$', "", self.__class__.__name__)
